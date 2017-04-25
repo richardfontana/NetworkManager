@@ -393,7 +393,7 @@ static gboolean ip6_config_merge_and_apply (NMDevice *self,
 
 static void nm_device_master_add_slave (NMDevice *self, NMDevice *slave, gboolean configure);
 static void nm_device_slave_notify_enslave (NMDevice *self, gboolean success);
-static void nm_device_slave_notify_release (NMDevice *self, NMDeviceStateReason reason);
+static void nm_device_slave_notify_release (NMDevice *self, gboolean allow_state_transition, NMDeviceStateReason reason);
 
 static gboolean addrconf6_start_with_link_ready (NMDevice *self);
 static NMActStageReturn linklocal6_start (NMDevice *self);
@@ -1224,6 +1224,7 @@ nm_device_master_enslave_slave (NMDevice *self, NMDevice *slave, NMConnection *c
  * nm_device_master_release_one_slave:
  * @self: the master device
  * @slave: the slave device to release
+ * @allow_state_transition: whether to allow a state transition for this call.
  * @configure: whether @self needs to actually release @slave
  * @reason: the state change reason for the @slave
  *
@@ -1232,7 +1233,7 @@ nm_device_master_enslave_slave (NMDevice *self, NMDevice *slave, NMConnection *c
  * updates the state of @self and @slave to reflect its release.
  */
 static void
-nm_device_master_release_one_slave (NMDevice *self, NMDevice *slave, gboolean configure, NMDeviceStateReason reason)
+nm_device_master_release_one_slave (NMDevice *self, NMDevice *slave, gboolean allow_state_transition, gboolean configure, NMDeviceStateReason reason)
 {
 	NMDevicePrivate *priv;
 	NMDevicePrivate *slave_priv;
@@ -1262,7 +1263,7 @@ nm_device_master_release_one_slave (NMDevice *self, NMDevice *slave, gboolean co
 		NM_DEVICE_GET_CLASS (self)->release_slave (self, slave, configure);
 
 	/* raise notifications about the release, including clearing is_enslaved. */
-	nm_device_slave_notify_release (slave, reason);
+	nm_device_slave_notify_release (slave, allow_state_transition, reason);
 
 	/* keep both alive until the end of the function.
 	 * Transfers ownership from slave_priv->master.  */
@@ -1527,10 +1528,9 @@ device_recheck_slave_status (NMDevice *self, const NMPlatformLink *plink)
 
 	g_return_if_fail (plink);
 
-	if (plink->master <= 0)
-		return;
-
 	if (priv->master) {
+		gboolean allow_state_transition;
+
 		if (   plink->master > 0
 		    && plink->master == nm_device_get_ifindex (priv->master)) {
 			/* call add-slave again. We expect @self already to be added to
@@ -1539,7 +1539,13 @@ device_recheck_slave_status (NMDevice *self, const NMPlatformLink *plink)
 			return;
 		}
 
-		nm_device_master_release_one_slave (priv->master, self, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
+		if (plink->master > 0)
+			allow_state_transition = TRUE;
+		else
+			allow_state_transition = FALSE;
+
+		nm_device_master_release_one_slave (priv->master, self, allow_state_transition,
+		                                    FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
 	}
 	if (plink->master > 0) {
 		NMDevice *master;
@@ -2369,7 +2375,7 @@ slave_state_changed (NMDevice *slave,
 	}
 
 	if (release) {
-		nm_device_master_release_one_slave (self, slave, TRUE, reason);
+		nm_device_master_release_one_slave (self, slave, TRUE, TRUE, reason);
 		/* Bridge/bond/team interfaces are left up until manually deactivated */
 		if (priv->slaves == NULL && priv->state == NM_DEVICE_STATE_ACTIVATED)
 			_LOGD (LOGD_DEVICE, "last slave removed; remaining activated");
@@ -2542,7 +2548,7 @@ nm_device_master_release_slaves (NMDevice *self)
 	while (priv->slaves) {
 		SlaveInfo *info = priv->slaves->data;
 
-		nm_device_master_release_one_slave (self, info->slave, configure, reason);
+		nm_device_master_release_one_slave (self, info->slave, TRUE, configure, reason);
 	}
 }
 
@@ -2629,12 +2635,13 @@ nm_device_slave_notify_enslave (NMDevice *self, gboolean success)
 /**
  * nm_device_slave_notify_release:
  * @self: the slave device
+ * @allow_state_transition: whether to allow a state transition for this call.
  * @reason: the reason associated with the state change
  *
  * Notifies a slave that it has been released, and why.
  */
 static void
-nm_device_slave_notify_release (NMDevice *self, NMDeviceStateReason reason)
+nm_device_slave_notify_release (NMDevice *self, gboolean allow_state_transition, NMDeviceStateReason reason)
 {
 	NMDevicePrivate *priv = NM_DEVICE_GET_PRIVATE (self);
 	NMConnection *connection = nm_device_get_applied_connection (self);
@@ -2643,7 +2650,8 @@ nm_device_slave_notify_release (NMDevice *self, NMDeviceStateReason reason)
 
 	g_return_if_fail (priv->master);
 
-	if (   priv->state > NM_DEVICE_STATE_DISCONNECTED
+	if (   allow_state_transition
+	    && priv->state > NM_DEVICE_STATE_DISCONNECTED
 	    && priv->state <= NM_DEVICE_STATE_ACTIVATED) {
 		if (reason == NM_DEVICE_STATE_REASON_DEPENDENCY_FAILED) {
 			new_state = NM_DEVICE_STATE_FAILED;
@@ -2704,7 +2712,7 @@ nm_device_removed (NMDevice *self, gboolean unconfigure_ip_config)
 	if (priv->master) {
 		/* this is called when something externally messes with the slave or during shut-down.
 		 * Release the slave from master, but don't touch the device. */
-		nm_device_master_release_one_slave (priv->master, self, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
+		nm_device_master_release_one_slave (priv->master, self, TRUE, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
 	}
 
 	if (!unconfigure_ip_config)
@@ -3530,7 +3538,7 @@ master_ready (NMDevice *self,
 	       nm_device_get_iface (master));
 
 	if (priv->master && priv->master != master)
-		nm_device_master_release_one_slave (priv->master, self, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
+		nm_device_master_release_one_slave (priv->master, self, TRUE, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
 
 	/* If the master didn't change, add-slave only rechecks whether to assume a connection. */
 	nm_device_master_add_slave (master,
@@ -10282,7 +10290,7 @@ nm_device_cleanup (NMDevice *self, NMDeviceStateReason reason, CleanupType clean
 	/* slave: mark no longer enslaved */
 	if (   priv->master
 	    && nm_platform_link_get_master (NM_PLATFORM_GET, priv->ifindex) <= 0)
-		nm_device_master_release_one_slave (priv->master, self, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
+		nm_device_master_release_one_slave (priv->master, self, TRUE, FALSE, NM_DEVICE_STATE_REASON_CONNECTION_ASSUMED);
 
 	/* Take out any entries in the routing table and any IP address the device had. */
 	ifindex = nm_device_get_ip_ifindex (self);
