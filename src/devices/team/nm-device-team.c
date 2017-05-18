@@ -317,7 +317,7 @@ teamd_cleanup (NMDevice *device, gboolean free_tdc)
 	nm_clear_g_source (&priv->teamd_read_timeout);
 
 	if (priv->teamd_pid > 0) {
-		nm_utils_kill_child_async (priv->teamd_pid, SIGTERM, LOGD_TEAM, "teamd", 2000, NULL, NULL);
+		nm_utils_kill_child_sync (priv->teamd_pid, SIGTERM, LOGD_TEAM, "teamd", NULL, 100, 5);
 		priv->teamd_pid = 0;
 	}
 
