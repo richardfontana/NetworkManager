@@ -361,6 +361,29 @@ _route_index_reverse_idx (const VTableIP *vtable, const RouteIndex *index, guint
 	return offset;
 }
 
+static gboolean
+_ignore_failure_to_add_route (NMPlatform *platform, const VTableIP *vtable, int ifindex, const NMPlatformIPXRoute *route, gint64 metric)
+{
+	if (route->rx.rt_source < NM_IP_CONFIG_SOURCE_USER)
+		return TRUE;
+
+	if (   !vtable->vt->is_ip4) {
+		if (!IN6_IS_ADDR_UNSPECIFIED (&route->r6.pref_src)) {
+			const NMPlatformIP6Address *addr;
+
+			addr = nm_platform_ip6_address_get (platform, ifindex, route->r6.pref_src);
+			if (   addr
+			    && NM_FLAGS_HAS (addr->n_ifa_flags, IFA_F_TENTATIVE)) {
+				/* we are unable to add a route with pref-src if the corresponding
+				 * address is still tentative. Ignore the error. */
+				return TRUE;
+			}
+		}
+	}
+
+	return FALSE;
+}
+
 /*****************************************************************************/
 
 static gboolean
@@ -898,7 +921,7 @@ next:
 			    || !_route_equals_ignoring_ifindex (vtable, cur_plat_route, cur_ipx_route, *p_effective_metric)) {
 
 				if (!vtable->vt->route_add (priv->platform, ifindex, cur_ipx_route, *p_effective_metric)) {
-					if (cur_ipx_route->rx.rt_source < NM_IP_CONFIG_SOURCE_USER) {
+					if (_ignore_failure_to_add_route (priv->platform, vtable, ifindex, cur_ipx_route, *p_effective_metric)) {
 						_LOGD (vtable->vt->addr_family,
 						       "ignore error adding IPv%c route to kernel: %s",
 						       vtable->vt->is_ip4 ? '4' : '6',

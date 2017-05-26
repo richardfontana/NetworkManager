@@ -73,7 +73,7 @@ NMSetting *nm_ip6_config_create_setting (const NMIP6Config *config);
 
 void nm_ip6_config_merge (NMIP6Config *dst, const NMIP6Config *src, NMIPConfigMergeFlags merge_flags);
 void nm_ip6_config_subtract (NMIP6Config *dst, const NMIP6Config *src);
-void nm_ip6_config_intersect (NMIP6Config *dst, const NMIP6Config *src);
+void nm_ip6_config_intersect (NMIP6Config *dst, const NMIP6Config *src, NMPlatform *platform);
 gboolean nm_ip6_config_replace (NMIP6Config *dst, const NMIP6Config *src, gboolean *relevant_changes);
 int nm_ip6_config_destination_is_direct (const NMIP6Config *config, const struct in6_addr *dest, guint8 plen);
 void nm_ip6_config_dump (const NMIP6Config *config, const char *detail);

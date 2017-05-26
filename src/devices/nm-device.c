@@ -10597,6 +10597,7 @@ update_ip6_config (NMDevice *self, gboolean initial)
 	NMDevicePrivate *priv = NM_DEVICE_GET_PRIVATE (self);
 	int ifindex;
 	gboolean capture_resolv_conf;
+	NMPlatform *platform;
 	GSList *iter;
 
 	/* If a commit is scheduled, this function would potentially interfere with
@@ -10620,10 +10621,12 @@ update_ip6_config (NMDevice *self, gboolean initial)
 	capture_resolv_conf =    initial
 	                      && nm_dns_manager_get_resolv_conf_explicit (nm_dns_manager_get ());
 
+	platform = nm_device_get_platform (self);
+
 	/* IPv6 */
 	g_clear_object (&priv->ext_ip6_config);
 	g_clear_object (&priv->ext_ip6_config_captured);
-	priv->ext_ip6_config_captured = nm_ip6_config_capture (nm_device_get_platform (self), ifindex, capture_resolv_conf, NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN);
+	priv->ext_ip6_config_captured = nm_ip6_config_capture (platform, ifindex, capture_resolv_conf, NM_SETTING_IP6_CONFIG_PRIVACY_UNKNOWN);
 	if (priv->ext_ip6_config_captured) {
 
 		priv->ext_ip6_config = nm_ip6_config_new_cloned (priv->ext_ip6_config_captured);
@@ -10633,15 +10636,15 @@ update_ip6_config (NMDevice *self, gboolean initial)
 		 * config. This way, we don't re-add addresses that were manually removed
 		 * by the user. */
 		if (priv->con_ip6_config)
-			nm_ip6_config_intersect (priv->con_ip6_config, priv->ext_ip6_config);
+			nm_ip6_config_intersect (priv->con_ip6_config, priv->ext_ip6_config, platform);
 		if (priv->ac_ip6_config)
-			nm_ip6_config_intersect (priv->ac_ip6_config, priv->ext_ip6_config);
+			nm_ip6_config_intersect (priv->ac_ip6_config, priv->ext_ip6_config, platform);
 		if (priv->dhcp6.ip6_config)
-			nm_ip6_config_intersect (priv->dhcp6.ip6_config, priv->ext_ip6_config);
+			nm_ip6_config_intersect (priv->dhcp6.ip6_config, priv->ext_ip6_config, platform);
 		if (priv->wwan_ip6_config)
-			nm_ip6_config_intersect (priv->wwan_ip6_config, priv->ext_ip6_config);
+			nm_ip6_config_intersect (priv->wwan_ip6_config, priv->ext_ip6_config, platform);
 		for (iter = priv->vpn6_configs; iter; iter = iter->next)
-			nm_ip6_config_intersect (iter->data, priv->ext_ip6_config);
+			nm_ip6_config_intersect (iter->data, priv->ext_ip6_config, platform);
 
 		/* Remove parts from ext_ip6_config to only contain the information that
 		 * was configured externally -- we already have the same configuration from

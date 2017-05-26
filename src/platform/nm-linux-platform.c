@@ -4139,7 +4139,7 @@ do_add_link_with_lookup (NMPlatform *platform,
 }
 
 static gboolean
-do_add_addrroute (NMPlatform *platform, const NMPObject *obj_id, struct nl_msg *nlmsg)
+do_add_addrroute (NMPlatform *platform, const NMPObject *obj_id, struct nl_msg *nlmsg, const struct in6_addr *ipv6_pref_src)
 {
 	NMLinuxPlatformPrivate *priv = NM_LINUX_PLATFORM_GET_PRIVATE (platform);
 	WaitForNlResponseResult seq_result = WAIT_FOR_NL_RESPONSE_RESULT_UNKNOWN;
@@ -4165,6 +4165,29 @@ do_add_addrroute (NMPlatform *platform, const NMPObject *obj_id, struct nl_msg *
 	delayed_action_handle_all (platform, FALSE);
 
 	nm_assert (seq_result);
+
+	if (   seq_result == -EINVAL
+	    && ipv6_pref_src) {
+		const NMPlatformIP6Address *pref_addr;
+
+		nm_assert (NMP_OBJECT_GET_TYPE (obj_id) == NMP_OBJECT_TYPE_IP6_ROUTE);
+		pref_addr = nm_platform_ip6_address_get (platform, obj_id->ip6_route.ifindex, *ipv6_pref_src);
+		if (   pref_addr
+		    && NM_FLAGS_HAS (pref_addr->n_ifa_flags, IFA_F_TENTATIVE)) {
+			/* kernel reject adding an IPv6 route if the pref-src is still tentative.
+			 * Silence the error and return.
+			 *
+			 * Yes, we cannot be sure that the error is really due to the pref-src.
+			 *
+			 * Hack. */
+			_NMLOG (LOGL_DEBUG,
+			        "do-add-%s[%s]: %s",
+			        NMP_OBJECT_GET_CLASS (obj_id)->obj_type_name,
+			        nmp_object_to_string (obj_id, NMP_OBJECT_TO_STRING_ID, NULL, 0),
+			        wait_for_nl_response_to_string (seq_result, s_buf, sizeof (s_buf)));
+			return FALSE;
+		}
+	}
 
 	_NMLOG (seq_result == WAIT_FOR_NL_RESPONSE_RESULT_RESPONSE_OK
 	            ? LOGL_DEBUG
@@ -5895,7 +5918,7 @@ ip4_address_add (NMPlatform *platform,
 	                             label);
 
 	nmp_object_stackinit_id_ip4_address (&obj_id, ifindex, addr, plen, peer_addr);
-	return do_add_addrroute (platform, &obj_id, nlmsg);
+	return do_add_addrroute (platform, &obj_id, nlmsg, NULL);
 }
 
 static gboolean
@@ -5925,7 +5948,7 @@ ip6_address_add (NMPlatform *platform,
 	                             NULL);
 
 	nmp_object_stackinit_id_ip6_address (&obj_id, ifindex, &addr);
-	return do_add_addrroute (platform, &obj_id, nlmsg);
+	return do_add_addrroute (platform, &obj_id, nlmsg, NULL);
 }
 
 static gboolean
@@ -6100,7 +6123,7 @@ ip4_route_add (NMPlatform *platform, const NMPlatformIP4Route *route)
 	                           ip_route_get_lock_flag ((NMPlatformIPRoute *) route));
 
 	nmp_object_stackinit_id_ip4_route (&obj_id, route->ifindex, network, route->plen, route->metric);
-	return do_add_addrroute (platform, &obj_id, nlmsg);
+	return do_add_addrroute (platform, &obj_id, nlmsg, NULL);
 }
 
 static gboolean
@@ -6109,8 +6132,11 @@ ip6_route_add (NMPlatform *platform, const NMPlatformIP6Route *route)
 	NMPObject obj_id;
 	nm_auto_nlmsg struct nl_msg *nlmsg = NULL;
 	struct in6_addr network;
+	const struct in6_addr *ipv6_pref_src;
 
 	nm_utils_ip6_address_clear_host_address (&network, &route->network, route->plen);
+
+	ipv6_pref_src = !IN6_IS_ADDR_UNSPECIFIED (&route->pref_src) ? &route->pref_src : NULL;
 
 	/* FIXME: take the scope from route into account */
 	nlmsg = _nl_msg_new_route (RTM_NEWROUTE,
@@ -6124,7 +6150,7 @@ ip6_route_add (NMPlatform *platform, const NMPlatformIP6Route *route)
 	                           &route->gateway,
 	                           route->metric,
 	                           route->mss,
-	                           !IN6_IS_ADDR_UNSPECIFIED (&route->pref_src) ? &route->pref_src : NULL,
+	                           ipv6_pref_src,
 	                           !IN6_IS_ADDR_UNSPECIFIED (&route->src) ? &route->src : NULL,
 	                           route->src_plen,
 	                           route->tos,
@@ -6136,7 +6162,7 @@ ip6_route_add (NMPlatform *platform, const NMPlatformIP6Route *route)
 	                           ip_route_get_lock_flag ((NMPlatformIPRoute *) route));
 
 	nmp_object_stackinit_id_ip6_route (&obj_id, route->ifindex, &network, route->plen, route->metric);
-	return do_add_addrroute (platform, &obj_id, nlmsg);
+	return do_add_addrroute (platform, &obj_id, nlmsg, ipv6_pref_src);
 }
 
 static gboolean

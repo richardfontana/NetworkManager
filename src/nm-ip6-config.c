@@ -968,7 +968,7 @@ nm_ip6_config_subtract (NMIP6Config *dst, const NMIP6Config *src)
 }
 
 void
-nm_ip6_config_intersect (NMIP6Config *dst, const NMIP6Config *src)
+nm_ip6_config_intersect (NMIP6Config *dst, const NMIP6Config *src, NMPlatform *platform)
 {
 	guint i;
 	gint idx;
@@ -1003,11 +1003,31 @@ nm_ip6_config_intersect (NMIP6Config *dst, const NMIP6Config *src)
 
 	/* routes */
 	for (i = 0; i < nm_ip6_config_get_num_routes (dst); ) {
-		idx = _routes_get_index (src, nm_ip6_config_get_route (dst, i));
-		if (idx < 0)
+		const NMPlatformIP6Route *r = nm_ip6_config_get_route (dst, i);
+
+		idx = _routes_get_index (src, r);
+		if (idx < 0) {
+
+			if (platform) {
+				const NMPlatformIP6Address *a;
+
+				if (   !IN6_IS_ADDR_UNSPECIFIED (&r->pref_src)
+				    && (a = nm_platform_ip6_address_get (platform, nm_ip6_config_get_ifindex (dst), r->pref_src))
+				    && NM_FLAGS_HAS (a->n_ifa_flags, IFA_F_TENTATIVE)) {
+					/* the route is protected from intersect. We don't remove it
+					 * because it has a pref-src address that is still tentative.
+					 * In that case, we want to keep tracking the route, so we can
+					 * configure it later when the device becomes active. */
+					goto next;
+				}
+			}
+
 			nm_ip6_config_del_route (dst, i);
-		else
-			i++;
+			continue;
+		}
+
+next:
+		i++;
 	}
 
 	/* ignore domains */
