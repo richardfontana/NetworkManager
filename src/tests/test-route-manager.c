@@ -947,6 +947,7 @@ _nmtstp_init_tests (int *argc, char ***argv)
 void
 _nmtstp_setup_tests (void)
 {
+	/* FIXME: delete file */
 	g_test_add ("/route-manager/ip4", test_fixture, NULL, fixture_setup, test_ip4, fixture_teardown);
 	g_test_add ("/route-manager/ip6", test_fixture, NULL, fixture_setup, test_ip6, fixture_teardown);
 	g_test_add ("/route-manager/ip4-full-sync", test_fixture, NULL, fixture_setup, test_ip4_full_sync, fixture_teardown);
