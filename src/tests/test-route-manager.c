@@ -644,6 +644,15 @@ test_ip6 (test_fixture *fixture, gconstpointer user_data)
 			.network = *nmtst_inet6_from_string ("2001:db8:abad:c0de::"),
 			.plen = 64,
 			.ifindex = fixture->ifindex0,
+			.gateway = *nmtst_inet6_from_string ("2001:db8:8086::1"),
+			.metric = 21,
+			.mss = 0,
+		},
+		{
+			.rt_source = nmp_utils_ip_config_source_round_trip_rtprot (NM_IP_CONFIG_SOURCE_USER),
+			.network = *nmtst_inet6_from_string ("2001:db8:abad:c0de::"),
+			.plen = 64,
+			.ifindex = fixture->ifindex0,
 			.gateway = in6addr_any,
 			.metric = 21,
 			.mss = 0,
@@ -806,9 +815,9 @@ _assert_route_check (const NMPlatformVTableRoute *vtable, gboolean has, const NM
 	g_assert (route);
 
 	if (vtable->is_ip4)
-		r = (const NMPlatformIPXRoute *) nm_platform_ip4_route_get (NM_PLATFORM_GET, route->rx.ifindex, route->r4.network, route->rx.plen, route->rx.metric);
+		r = (const NMPlatformIPXRoute *) nmtstp_ip4_route_get (NM_PLATFORM_GET, route->rx.ifindex, route->r4.network, route->rx.plen, route->rx.metric, route->r4.tos);
 	else
-		r = (const NMPlatformIPXRoute *) nm_platform_ip6_route_get (NM_PLATFORM_GET, route->rx.ifindex, route->r6.network, route->rx.plen, route->rx.metric);
+		r = (const NMPlatformIPXRoute *) nmtstp_ip6_route_get (NM_PLATFORM_GET, route->rx.ifindex, &route->r6.network, route->rx.plen, route->rx.metric, &route->r6.src, route->r6.src_plen);
 
 	if (!has) {
 		g_assert (!r);
@@ -940,6 +949,5 @@ _nmtstp_setup_tests (void)
 {
 	g_test_add ("/route-manager/ip4", test_fixture, NULL, fixture_setup, test_ip4, fixture_teardown);
 	g_test_add ("/route-manager/ip6", test_fixture, NULL, fixture_setup, test_ip6, fixture_teardown);
-
 	g_test_add ("/route-manager/ip4-full-sync", test_fixture, NULL, fixture_setup, test_ip4_full_sync, fixture_teardown);
 }

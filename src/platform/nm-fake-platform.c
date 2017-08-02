@@ -394,6 +394,7 @@ link_delete (NMPlatform *platform, int ifindex)
 	cache_op = nmp_cache_remove (nm_platform_get_cache (platform),
 	                             obj_old,
 	                             FALSE,
+	                             FALSE,
 	                             &obj_old2);
 	g_assert (cache_op == NMP_CACHE_OPS_REMOVED);
 	g_assert (obj_old2);
@@ -1085,6 +1086,7 @@ ipx_address_delete (NMPlatform *platform,
 		if (nmp_cache_remove (nm_platform_get_cache (platform),
 		                      o,
 		                      TRUE,
+		                      FALSE,
 		                      &obj_old) != NMP_CACHE_OPS_REMOVED)
 			g_assert_not_reached ();
 		g_assert (obj_old);
@@ -1171,6 +1173,7 @@ ipx_route_delete (NMPlatform *platform,
 		if (nmp_cache_remove (nm_platform_get_cache (platform),
 		                      o,
 		                      TRUE,
+		                      FALSE,
 		                      &obj_old) != NMP_CACHE_OPS_REMOVED)
 			g_assert_not_reached ();
 		g_assert (obj_old);
