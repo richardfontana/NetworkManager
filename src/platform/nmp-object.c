@@ -1760,10 +1760,11 @@ nmp_cache_lookup_link_full (const NMPCache *cache,
 /*****************************************************************************/
 
 static void
-_idxcache_update_box_move (NMPCache *cache,
-                           NMPCacheIdType cache_id_type,
-                           const NMPObject *obj_old,
-                           const NMPObject *obj_new)
+_idxcache_update_other_cache_ids (NMPCache *cache,
+                                  NMPCacheIdType cache_id_type,
+                                  const NMPObject *obj_old,
+                                  const NMPObject *obj_new,
+                                  gboolean is_dump)
 {
 	const NMDedupMultiEntry *entry_new;
 	const NMDedupMultiEntry *entry_old;
@@ -1815,8 +1816,12 @@ _idxcache_update_box_move (NMPCache *cache,
 		nm_dedup_multi_index_add_full (cache->multi_idx,
 		                               idx_type,
 		                               obj_new,
-		                               NM_DEDUP_MULTI_IDX_MODE_APPEND,
-		                               entry_order,
+		                               is_dump
+		                                 ? NM_DEDUP_MULTI_IDX_MODE_APPEND_FORCE
+		                                 : NM_DEDUP_MULTI_IDX_MODE_APPEND,
+		                               is_dump
+		                                 ? NULL
+		                                 : entry_order,
 		                               entry_new ?: NM_DEDUP_MULTI_ENTRY_MISSING,
 		                               entry_new ? entry_new->head : (entry_order ? entry_order->head : NULL),
 		                               &entry_new,
@@ -1842,6 +1847,7 @@ static void
 _idxcache_update (NMPCache *cache,
                   const NMDedupMultiEntry *entry_old,
                   NMPObject *obj_new,
+                  gboolean is_dump,
                   const NMDedupMultiEntry **out_entry_new)
 {
 	const NMPClass *klass;
@@ -1888,7 +1894,9 @@ _idxcache_update (NMPCache *cache,
 		nm_dedup_multi_index_add_full (cache->multi_idx,
 		                               idx_type_o,
 		                               obj_new,
-		                               NM_DEDUP_MULTI_IDX_MODE_APPEND,
+		                               is_dump
+		                                 ? NM_DEDUP_MULTI_IDX_MODE_APPEND_FORCE
+		                                 : NM_DEDUP_MULTI_IDX_MODE_APPEND,
 		                               NULL,
 		                               entry_old ?: NM_DEDUP_MULTI_ENTRY_MISSING,
 		                               NULL,
@@ -1908,9 +1916,10 @@ _idxcache_update (NMPCache *cache,
 
 		if (id_type == NMP_CACHE_ID_TYPE_OBJECT_TYPE)
 			continue;
-		_idxcache_update_box_move (cache, id_type,
-		                           obj_old,
-		                           entry_new ? entry_new->obj : NULL);
+		_idxcache_update_other_cache_ids (cache, id_type,
+		                                  obj_old,
+		                                  entry_new ? entry_new->obj : NULL,
+		                                  is_dump);
 	}
 
 	NM_SET_OUT (out_entry_new, entry_new);
@@ -1942,7 +1951,7 @@ nmp_cache_remove (NMPCache *cache,
 		 * @obj_needle. */
 		return NMP_CACHE_OPS_UNCHANGED;
 	}
-	_idxcache_update (cache, entry_old, NULL, NULL);
+	_idxcache_update (cache, entry_old, NULL, FALSE, NULL);
 	return NMP_CACHE_OPS_REMOVED;
 }
 
@@ -1983,7 +1992,7 @@ nmp_cache_remove_netlink (NMPCache *cache,
 
 		if (!obj_old->_link.udev.device) {
 			/* the update would make @obj_old invalid. Remove it. */
-			_idxcache_update (cache, entry_old, NULL, NULL);
+			_idxcache_update (cache, entry_old, NULL, FALSE, NULL);
 			NM_SET_OUT (out_obj_new, NULL);
 			return NMP_CACHE_OPS_REMOVED;
 		}
@@ -1997,6 +2006,7 @@ nmp_cache_remove_netlink (NMPCache *cache,
 		_idxcache_update (cache,
 		                  entry_old,
 		                  obj_new,
+		                  FALSE,
 		                  &entry_new);
 		NM_SET_OUT (out_obj_new, nmp_object_ref (entry_new->obj));
 		return NMP_CACHE_OPS_UPDATED;
@@ -2004,7 +2014,7 @@ nmp_cache_remove_netlink (NMPCache *cache,
 
 	NM_SET_OUT (out_obj_old, nmp_object_ref (obj_old));
 	NM_SET_OUT (out_obj_new, NULL);
-	_idxcache_update (cache, entry_old, NULL, NULL);
+	_idxcache_update (cache, entry_old, NULL, FALSE, NULL);
 	return NMP_CACHE_OPS_REMOVED;
 }
 
@@ -2018,6 +2028,12 @@ nmp_cache_remove_netlink (NMPCache *cache,
  *    calling nmp_cache_update_netlink() you hand @obj over to the cache.
  *    Except, that the cache will increment the ref count as appropriate. You
  *    must still unref the obj to release your part of the ownership.
+ * @is_dump: whether this update comes during a dump of object of the same kind.
+ *    kernel dumps objects in a certain order, which matters especially for routes.
+ *    Before a dump we mark all objects as dirty, and remove all untouched objects
+ *    afterwards. Hence, during a dump, every update should move the object to the
+ *    end of the list, to obtain the correct order. That means, to use NM_DEDUP_MULTI_IDX_MODE_APPEND_FORCE,
+ *    instead of NM_DEDUP_MULTI_IDX_MODE_APPEND.
  * @out_obj_old: (allow-none): (out): return the object with same ID as @obj_hand_over,
  *    that was in the cache before update. If an object is returned, the caller must
  *    unref it afterwards.
@@ -2032,6 +2048,7 @@ nmp_cache_remove_netlink (NMPCache *cache,
 NMPCacheOpsType
 nmp_cache_update_netlink (NMPCache *cache,
                           NMPObject *obj_hand_over,
+                          gboolean is_dump,
                           const NMPObject **out_obj_old,
                           const NMPObject **out_obj_new)
 {
@@ -2070,6 +2087,7 @@ nmp_cache_update_netlink (NMPCache *cache,
 		_idxcache_update (cache,
 		                  entry_old,
 		                  obj_hand_over,
+		                  is_dump,
 		                  &entry_new);
 		NM_SET_OUT (out_obj_new, nmp_object_ref (entry_new->obj));
 		return NMP_CACHE_OPS_ADDED;
@@ -2123,7 +2141,7 @@ nmp_cache_update_netlink (NMPCache *cache,
 
 	if (!is_alive) {
 		/* the update would make @obj_old invalid. Remove it. */
-		_idxcache_update (cache, entry_old, NULL, NULL);
+		_idxcache_update (cache, entry_old, NULL, FALSE, NULL);
 		NM_SET_OUT (out_obj_new, NULL);
 		return NMP_CACHE_OPS_REMOVED;
 	}
@@ -2137,6 +2155,7 @@ nmp_cache_update_netlink (NMPCache *cache,
 	_idxcache_update (cache,
 	                  entry_old,
 	                  obj_hand_over,
+	                  is_dump,
 	                  &entry_new);
 	NM_SET_OUT (out_obj_new, nmp_object_ref (entry_new->obj));
 	return NMP_CACHE_OPS_UPDATED;
@@ -2172,6 +2191,7 @@ nmp_cache_update_link_udev (NMPCache *cache,
 		_idxcache_update (cache,
 		                  NULL,
 		                  obj_new,
+		                  FALSE,
 		                  &entry_new);
 		NM_SET_OUT (out_obj_old, NULL);
 		NM_SET_OUT (out_obj_new, nmp_object_ref (entry_new->obj));
@@ -2187,7 +2207,7 @@ nmp_cache_update_link_udev (NMPCache *cache,
 
 		if (!udevice && !obj_old->_link.netlink.is_in_netlink) {
 			/* the update would make @obj_old invalid. Remove it. */
-			_idxcache_update (cache, entry_old, NULL, NULL);
+			_idxcache_update (cache, entry_old, NULL, FALSE, NULL);
 			NM_SET_OUT (out_obj_new, NULL);
 			return NMP_CACHE_OPS_REMOVED;
 		}
@@ -2202,6 +2222,7 @@ nmp_cache_update_link_udev (NMPCache *cache,
 		_idxcache_update (cache,
 		                  entry_old,
 		                  obj_new,
+		                  FALSE,
 		                  &entry_new);
 		NM_SET_OUT (out_obj_new, nmp_object_ref (entry_new->obj));
 		return NMP_CACHE_OPS_UPDATED;
@@ -2242,6 +2263,7 @@ nmp_cache_update_link_master_connected (NMPCache *cache,
 	_idxcache_update (cache,
 	                  entry_old,
 	                  obj_new,
+	                  FALSE,
 	                  &entry_new);
 	NM_SET_OUT (out_obj_new, nmp_object_ref (entry_new->obj));
 	return NMP_CACHE_OPS_UPDATED;
